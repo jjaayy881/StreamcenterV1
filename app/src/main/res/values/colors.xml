@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Basis -->
+    <color name="color_background">#141414</color>
+    <color name="color_background_dark">#000000</color>
+    <color name="color_surface">#222222</color>
+    <color name="color_surface_light">#2E2E2E</color>
+    <color name="color_outline">#3A3A3A</color>
+
+    <!-- Marke/Akzent - durchgezogen fuer Fokus, Auswahl, Buttons -->
+    <color name="color_primary">#E50914</color>
+    <color name="color_primary_variant">#B00710</color>
+    <color name="color_primary_dim">#66E50914</color>
+    <color name="color_primary_faint">#33E50914</color>
+
+    <!-- Text -->
+    <color name="color_text_primary">#FFFFFF</color>
+    <color name="color_text_secondary">#AAAAAA</color>
+    <color name="color_text_disabled">#6E6E6E</color>
+    <color name="color_hint">#888888</color>
+
+    <!-- Semantische Farben - bewusst von der Marke unterschieden, damit
+         Fokus/Auswahl (rot) nicht mit Status-Feedback verwechselt wird -->
+    <color name="color_favorite">#FFD54F</color>
+    <color name="color_success">#4CAF50</color>
+    <color name="color_error">#FF6E6E</color>
+</resources>
