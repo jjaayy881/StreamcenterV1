@@ -43,6 +43,10 @@
             android:exported="false" />
 
         <activity
+            android:name=".ChannelSelectionActivity"
+            android:exported="false" />
+
+        <activity
             android:name=".PlayerActivity"
             android:exported="false"
             android:screenOrientation="landscape"

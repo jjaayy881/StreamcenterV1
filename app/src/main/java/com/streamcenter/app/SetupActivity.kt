@@ -67,9 +67,10 @@ class SetupActivity : AppCompatActivity() {
             // Bedarf selbst per Telefonnummer/Code ein (siehe TelegramLoginActivity)
             // und traegt den session_string danach automatisch nach.
             val json = JSONObject(jsonText)
-            listOf("api_id", "api_hash", "channels").forEach {
+            listOf("api_id", "api_hash").forEach {
                 if (!json.has(it)) throw IllegalArgumentException("Feld '$it' fehlt")
             }
+            if (!json.has("channels")) json.put("channels", JSONObject())
 
             val file = StreamApp.configFile(application)
             file.writeText(json.toString())

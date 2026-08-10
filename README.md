@@ -21,20 +21,24 @@ HTML-Frontend) + LibVLC (`MediaListPlayer`) fürs Zappen per D-Pad.
 ## Einrichtung auf dem Gerät
 
 Beim ersten Start fragt die App nach einer minimalen `config.json` - nur noch
-`api_id`, `api_hash` und `channels`:
+`api_id` und `api_hash`:
 ```json
 {
   "api_id": "12345678",
-  "api_hash": "dein32stelligerhash",
-  "channels": {
-    "Dream-Stream": -1003979214219
-  }
+  "api_hash": "dein32stelligerhash"
 }
 ```
 `api_id`/`api_hash` holst du dir einmalig unter https://my.telegram.org/apps.
-Ein `session_string` wird **nicht** mehr gebraucht - die App loggt sich danach
-selbst ein (Telefonnummer + per SMS/App erhaltenen Code eintippen, ggf. 2FA-Passwort)
-und trägt den erzeugten `session_string` automatisch in die `config.json` nach.
+Alles Weitere passiert danach direkt in der App:
+1. **Login**: Telefonnummer eingeben, per SMS/App erhaltenen Code eintippen, bei
+   aktivierter 2FA zusätzlich das Cloud-Passwort. Der `session_string` wird dabei
+   intern erzeugt und automatisch in die `config.json` nachgetragen - du siehst
+   ihn nie und musst ihn nie kopieren.
+2. **Kanäle auswählen**: die App zeigt eine Liste aller Kanäle/Gruppen des Accounts;
+   einfach antippen, welche in der App erscheinen sollen. Die Auswahl wird ebenfalls
+   automatisch in die `config.json` geschrieben - kein manuelles Heraussuchen von
+   Kanal-IDs mehr nötig.
+
 Das externe `telegram_info.py`-Skript (Telethon) wird dafür nicht mehr benötigt.
 
 Die `config.json` selbst kommt wie bisher auf zwei Wegen aufs Gerät:

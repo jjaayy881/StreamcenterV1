@@ -59,7 +59,7 @@
         android:background="@drawable/edittext_focus_background"
         android:textColor="@color/color_text_primary"
         android:inputType="textMultiLine"
-        android:hint="{ &quot;api_id&quot;: ..., &quot;api_hash&quot;: ..., &quot;channels&quot;: { ... } }&#10;(session_string nicht noetig - Login erfolgt danach in der App)"
+        android:hint="{ &quot;api_id&quot;: ..., &quot;api_hash&quot;: ... }&#10;(Login + Kanalauswahl passieren danach direkt in der App)"
         android:textColorHint="@color/color_text_disabled"
         android:padding="12dp"
         android:layout_marginBottom="16dp" />

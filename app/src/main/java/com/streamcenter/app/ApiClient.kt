@@ -194,6 +194,50 @@ object ApiClient {
         return singleAttemptWithStatus("$BASE/api/telegram/login/password?password=$enc")
     }
 
+    /** Schritt 3 (nur bei 2FA): Cloud-Passwort bestaetigen. Erfolg liefert status="ok". */
+    suspend fun telegramLoginPassword(password: String): Pair<String?, String?> {
+        val enc = URLEncoder.encode(password, "UTF-8")
+        return singleAttemptWithStatus("$BASE/api/telegram/login/password?password=$enc")
+    }
+
+    data class TelegramDialog(val name: String, val id: Long)
+
+    /** Listet alle Kanaele/Gruppen des gerade eingeloggten Accounts - fuer die
+     * Antipp-Auswahl statt manuellem Eintragen von IDs in die config.json. */
+    suspend fun telegramDialogs(): Pair<List<TelegramDialog>?, String?> = withContext(Dispatchers.IO) {
+        val conn = URL("$BASE/api/telegram/login/dialogs").openConnection() as HttpURLConnection
+        conn.connectTimeout = 5000
+        conn.readTimeout = 20000
+        try {
+            val code = conn.responseCode
+            val stream = if (code in 200..299) conn.inputStream else conn.errorStream
+            val body = stream?.bufferedReader()?.use { it.readText() } ?: ""
+            val o = if (body.isNotBlank()) JSONObject(body) else JSONObject()
+            if (code in 200..299) {
+                val arr = o.optJSONArray("dialogs") ?: JSONArray()
+                val list = (0 until arr.length()).map { i ->
+                    val d = arr.getJSONObject(i)
+                    TelegramDialog(d.getString("name"), d.getLong("id"))
+                }
+                list to null
+            } else {
+                null to (o.optNullableString("error") ?: "HTTP $code")
+            }
+        } catch (e: Exception) {
+            null to (e.message ?: "Unbekannter Fehler")
+        } finally {
+            conn.disconnect()
+        }
+    }
+
+    /** Speichert die angetippte Kanalauswahl (Name -> ID) dauerhaft in der config.json. */
+    suspend fun saveTelegramChannels(selected: Map<String, Long>): Pair<String?, String?> {
+        val json = JSONObject()
+        selected.forEach { (name, id) -> json.put(name, id) }
+        val enc = URLEncoder.encode(json.toString(), "UTF-8")
+        return singleAttemptWithStatus("$BASE/api/telegram/login/channels/save?selected=$enc")
+    }
+
     private suspend fun singleAttempt(urlStr: String): Pair<Boolean, String?> = withContext(Dispatchers.IO) {
         val conn = URL(urlStr).openConnection() as HttpURLConnection
         conn.connectTimeout = 5000

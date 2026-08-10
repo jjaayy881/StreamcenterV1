@@ -28,6 +28,11 @@ class MainActivity : AppCompatActivity() {
             finish()
             return
         }
+        if (StreamApp.needsChannelSelection(application)) {
+            startActivity(Intent(this, ChannelSelectionActivity::class.java))
+            finish()
+            return
+        }
 
         setContentView(R.layout.activity_main)
 

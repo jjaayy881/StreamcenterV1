@@ -91,7 +91,7 @@ class TelegramLoginActivity : AppCompatActivity() {
                 "code_sent" -> showStep(Step.CODE)
                 "need_password" -> showStep(Step.PASSWORD)
                 "ok" -> {
-                    startActivity(Intent(this@TelegramLoginActivity, MainActivity::class.java))
+                    startActivity(Intent(this@TelegramLoginActivity, ChannelSelectionActivity::class.java))
                     finish()
                 }
                 else -> statusText.showError("Unerwartete Antwort: $status")

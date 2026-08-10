@@ -32,6 +32,20 @@ class StreamApp : Application() {
             }
         }
 
+        /** true, wenn schon eingeloggt (session_string vorhanden), aber noch keine Kanaele
+         * ausgewaehlt wurden - z.B. weil die App zwischen Login und Kanalauswahl beendet
+         * wurde. MainActivity leitet in diesem Fall zu ChannelSelectionActivity. */
+        fun needsChannelSelection(app: Application): Boolean {
+            if (needsTelegramLogin(app)) return false
+            return try {
+                val json = org.json.JSONObject(configFile(app).readText())
+                val channels = json.optJSONObject("channels")
+                channels == null || channels.length() == 0
+            } catch (e: Exception) {
+                false
+            }
+        }
+
         /** Darf mehrfach aufgerufen werden - startet den Server nur beim ersten Mal. */
         fun startBackendIfNeeded(app: Application) {
             if (!hasConfig(app)) return

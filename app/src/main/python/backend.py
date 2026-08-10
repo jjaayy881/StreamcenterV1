@@ -1658,6 +1658,59 @@ async def api_telegram_login_password(request):
     return json_response_cors({"error": TELEGRAM_STATUS["error"] or "Aktivierung fehlgeschlagen"}, status=500)
 
 
+async def api_telegram_dialogs(request):
+    """Listet alle Kanaele/Supergruppen des gerade eingeloggten Accounts auf, damit der
+    Nutzer sie in der App antippen statt IDs von Hand raussuchen/eintragen zu muessen."""
+    if client is None:
+        return json_response_cors({"error": "Noch nicht eingeloggt"}, status=400)
+    try:
+        results = []
+        async for dialog in client.get_dialogs(limit=300):
+            chat = dialog.chat
+            if chat.type.name in ("CHANNEL", "SUPERGROUP", "GROUP"):
+                results.append({"name": chat.title or str(chat.id), "id": chat.id})
+        results.sort(key=lambda c: c["name"].lower())
+        return json_response_cors({"dialogs": results})
+    except Exception as e:
+        log("FEHLER", f"Dialogliste konnte nicht geladen werden: {e}")
+        return json_response_cors({"error": str(e)}, status=500)
+
+
+async def api_telegram_save_channels(request):
+    """Speichert die vom Nutzer angetippte Kanalauswahl (Name -> ID) dauerhaft in der
+    config.json, genau wie der session_string nach dem Login automatisch eingetragen wird."""
+    global CHANNELS
+    raw = request.query.get("selected") or ""
+    try:
+        selected = json.loads(raw)
+        if not isinstance(selected, dict) or not selected:
+            raise ValueError("Auswahl ist leer oder kein Objekt")
+        selected = {str(name): int(chat_id) for name, chat_id in selected.items()}
+    except Exception as e:
+        return json_response_cors({"error": f"Ungueltige Auswahl: {e}"}, status=400)
+
+    CHANNELS = selected
+    try:
+        with open(CONFIG_PATH, "r", encoding="utf-8") as f:
+            config = json.load(f)
+        config["channels"] = selected
+        with open(CONFIG_PATH, "w", encoding="utf-8") as f:
+            json.dump(config, f, ensure_ascii=False, indent=2)
+        log("OK", f"{len(selected)} Kanaele in config.json gespeichert")
+    except Exception as e:
+        log("WARNUNG", f"Konnte Kanalauswahl nicht speichern: {e}")
+        return json_response_cors({"error": str(e)}, status=500)
+
+    if client is not None:
+        for name, chat_id in selected.items():
+            try:
+                await client.get_chat(chat_id)
+            except Exception as e:
+                log("WARNUNG", f"Kanal '{name}' (ID {chat_id}) konnte nicht aufgeloest werden: {e}")
+
+    return json_response_cors({"status": "ok"})
+
+
 # =========================
 # STARTUP (wird aus Kotlin per Chaquopy aufgerufen)
 # =========================
@@ -1685,7 +1738,7 @@ def start_server(config_path):
 
     with open(config_path, "r", encoding="utf-8") as f:
         config = json.load(f)
-    CHANNELS = config["channels"]
+    CHANNELS = config.get("channels") or {}
     API_ID = int(config["api_id"])
     API_HASH = config["api_hash"]
     TMDB_API_KEY = config.get("tmdb_api_key") or None
@@ -1744,6 +1797,8 @@ def start_server(config_path):
         app.router.add_get("/api/telegram/login/start", api_telegram_login_start)
         app.router.add_get("/api/telegram/login/code", api_telegram_login_code)
         app.router.add_get("/api/telegram/login/password", api_telegram_login_password)
+        app.router.add_get("/api/telegram/login/dialogs", api_telegram_dialogs)
+        app.router.add_get("/api/telegram/login/channels/save", api_telegram_save_channels)
         app.router.add_get("/api/channels", api_get_channels)
         app.router.add_get("/api/topics", api_get_topics)
         app.router.add_get("/api/movies", api_get_movies)
