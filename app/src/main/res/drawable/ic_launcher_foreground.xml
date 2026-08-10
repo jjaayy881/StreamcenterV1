@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <!-- Duenner Ring, symbolisiert Bildschirm/Empfang -->
+    <path
+        android:pathData="M54,24 A30,30 0 1 1 53.9,24"
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="3.5"
+        android:fillColor="#00000000" />
+
+    <!-- Play-Dreieck, zentriert -->
+    <path
+        android:pathData="M43,37 L43,71 L75,54 Z"
+        android:fillColor="#FFFFFF" />
+</vector>

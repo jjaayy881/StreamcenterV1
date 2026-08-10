@@ -1,0 +1,101 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:background="@color/color_background"
+    android:padding="16dp">
+
+    <LinearLayout
+        android:id="@+id/connect_bar"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:visibility="gone"
+        android:layout_marginBottom="10dp">
+
+        <TextView
+            android:id="@+id/connect_title"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Stalker-Portal verbinden"
+            android:textColor="@color/color_text_primary"
+            android:textSize="18sp"
+            android:textStyle="bold"
+            android:layout_marginBottom="8dp" />
+
+        <EditText
+            android:id="@+id/edit_stalker_name"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:hint="Name (optional), z.B. Nando"
+            android:textColorHint="@color/color_hint"
+            android:textColor="@color/color_text_primary"
+            android:background="@drawable/edittext_focus_background"
+            android:padding="12dp"
+            android:layout_marginBottom="8dp"
+            android:inputType="text" />
+
+        <EditText
+            android:id="@+id/edit_stalker_url"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:hint="Portal-URL, z.B. http://server:8080"
+            android:textColorHint="@color/color_hint"
+            android:textColor="@color/color_text_primary"
+            android:background="@drawable/edittext_focus_background"
+            android:padding="12dp"
+            android:layout_marginBottom="8dp"
+            android:inputType="textUri" />
+
+        <EditText
+            android:id="@+id/edit_stalker_mac"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:hint="MAC-Adresse, z.B. 00:1A:79:XX:XX:XX"
+            android:textColorHint="@color/color_hint"
+            android:textColor="@color/color_text_primary"
+            android:background="@drawable/edittext_focus_background"
+            android:padding="12dp"
+            android:layout_marginBottom="10dp"
+            android:inputType="textVisiblePassword" />
+
+        <Button
+            android:id="@+id/btn_stalker_connect"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:minWidth="0dp"
+            android:background="@drawable/button_focus_background"
+            android:textColor="@color/color_text_primary"
+            android:paddingStart="24dp"
+            android:paddingEnd="24dp"
+            android:text="Verbinden" />
+
+        <TextView
+            android:id="@+id/connect_status"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:textColor="@color/color_text_secondary"
+            android:textSize="14sp"
+            android:layout_marginTop="8dp"
+            android:visibility="gone" />
+    </LinearLayout>
+
+    <TextView
+        android:id="@+id/header"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="Stalker Portal"
+        android:textColor="@color/color_text_primary"
+        android:textSize="20sp"
+        android:textStyle="bold"
+        android:layout_marginBottom="12dp" />
+
+    <androidx.recyclerview.widget.RecyclerView
+        android:id="@+id/recycler"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:clipChildren="false"
+        android:clipToPadding="false"
+        android:descendantFocusability="afterDescendants" />
+</LinearLayout>
