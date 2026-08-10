@@ -194,12 +194,6 @@ object ApiClient {
         return singleAttemptWithStatus("$BASE/api/telegram/login/password?password=$enc")
     }
 
-    /** Schritt 3 (nur bei 2FA): Cloud-Passwort bestaetigen. Erfolg liefert status="ok". */
-    suspend fun telegramLoginPassword(password: String): Pair<String?, String?> {
-        val enc = URLEncoder.encode(password, "UTF-8")
-        return singleAttemptWithStatus("$BASE/api/telegram/login/password?password=$enc")
-    }
-
     data class TelegramDialog(val name: String, val id: Long)
 
     /** Listet alle Kanaele/Gruppen des gerade eingeloggten Accounts - fuer die
