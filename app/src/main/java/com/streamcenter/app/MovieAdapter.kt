@@ -7,9 +7,11 @@ import android.text.style.ForegroundColorSpan
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
+import android.widget.ImageView
 import android.widget.TextView
 import androidx.core.content.ContextCompat
 import androidx.recyclerview.widget.RecyclerView
+import com.bumptech.glide.Glide
 
 class MovieAdapter(
     private var movies: List<Movie>,
@@ -21,6 +23,7 @@ class MovieAdapter(
     class MovieHolder(view: View) : RecyclerView.ViewHolder(view) {
         val title: TextView = view.findViewById(R.id.text_title)
         val overview: TextView = view.findViewById(R.id.text_overview)
+        val poster: ImageView = view.findViewById(R.id.image_poster)
     }
 
     // Nur beim naechsten Bind von Position 0 nach einem update() den initialen D-Pad-Fokus
@@ -73,6 +76,20 @@ class MovieAdapter(
             holder.overview.visibility = TextView.VISIBLE
         } else {
             holder.overview.visibility = TextView.GONE
+        }
+
+        // Poster: Glide cached auf Platte, damit beim erneuten Scrollen/Aufruf nicht jedes
+        // Mal neu vom Stalker-Portal/TMDB geladen wird. Ohne poster_url bleibt die
+        // ImageView unsichtbar statt einen leeren/kaputten Platzhalter zu zeigen.
+        if (!movie.posterUrl.isNullOrBlank()) {
+            holder.poster.visibility = View.VISIBLE
+            Glide.with(context)
+                .load(movie.posterUrl)
+                .centerCrop()
+                .into(holder.poster)
+        } else {
+            Glide.with(context).clear(holder.poster)
+            holder.poster.visibility = View.GONE
         }
 
         holder.itemView.setOnClickListener { onClick(position) }
