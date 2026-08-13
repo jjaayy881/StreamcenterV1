@@ -155,23 +155,33 @@ object ApiClient {
 
     /** Wie singleAttempt(), gibt bei Erfolg aber den "status"-Wert aus der Antwort zurueck
      * statt nur true/false - fuer den Telegram-Login-Flow, der zwischen "code_sent",
-     * "need_password" und "ok" unterscheiden muss. */
+     * "need_password" und "ok" unterscheiden muss.
+     * Wartet (wie getText()) bis zu ~15s auf den Verbindungsaufbau, falls das Backend
+     * gerade erst hochfaehrt (z.B. direkt nach dem Speichern der config.json) - ein
+     * "Failed to connect" in diesem Moment ist kein echter Fehler, sondern nur zu frueh. */
     private suspend fun singleAttemptWithStatus(urlStr: String): Pair<String?, String?> = withContext(Dispatchers.IO) {
-        val conn = URL(urlStr).openConnection() as HttpURLConnection
-        conn.connectTimeout = 5000
-        conn.readTimeout = 45000
-        try {
-            val code = conn.responseCode
-            val stream = if (code in 200..299) conn.inputStream else conn.errorStream
-            val body = stream?.bufferedReader()?.use { it.readText() } ?: ""
-            val o = if (body.isNotBlank()) JSONObject(body) else JSONObject()
-            if (code in 200..299) (o.optString("status", "ok")) to null
-            else null to (o.optNullableString("error") ?: "HTTP $code")
-        } catch (e: Exception) {
-            null to (e.message ?: "Unbekannter Fehler")
-        } finally {
-            conn.disconnect()
+        var lastConnectError: Exception? = null
+        repeat(15) { attempt ->
+            val conn = URL(urlStr).openConnection() as HttpURLConnection
+            conn.connectTimeout = 3000
+            conn.readTimeout = 45000
+            try {
+                val code = conn.responseCode
+                val stream = if (code in 200..299) conn.inputStream else conn.errorStream
+                val body = stream?.bufferedReader()?.use { it.readText() } ?: ""
+                val o = if (body.isNotBlank()) JSONObject(body) else JSONObject()
+                return@withContext if (code in 200..299) (o.optString("status", "ok")) to null
+                else null to (o.optNullableString("error") ?: "HTTP $code")
+            } catch (e: java.net.ConnectException) {
+                lastConnectError = e
+                if (attempt < 14) Thread.sleep(1000)
+            } catch (e: Exception) {
+                return@withContext null to (e.message ?: "Unbekannter Fehler")
+            } finally {
+                conn.disconnect()
+            }
         }
+        null to "Backend nicht erreichbar: ${lastConnectError?.message ?: "Verbindung fehlgeschlagen"}"
     }
 
     /** Schritt 1: Telefonnummer senden -> Telegram schickt einen Code per SMS/App.
@@ -199,29 +209,36 @@ object ApiClient {
     /** Listet alle Kanaele/Gruppen des gerade eingeloggten Accounts - fuer die
      * Antipp-Auswahl statt manuellem Eintragen von IDs in die config.json. */
     suspend fun telegramDialogs(): Pair<List<TelegramDialog>?, String?> = withContext(Dispatchers.IO) {
-        val conn = URL("$BASE/api/telegram/login/dialogs").openConnection() as HttpURLConnection
-        conn.connectTimeout = 5000
-        conn.readTimeout = 20000
-        try {
-            val code = conn.responseCode
-            val stream = if (code in 200..299) conn.inputStream else conn.errorStream
-            val body = stream?.bufferedReader()?.use { it.readText() } ?: ""
-            val o = if (body.isNotBlank()) JSONObject(body) else JSONObject()
-            if (code in 200..299) {
-                val arr = o.optJSONArray("dialogs") ?: JSONArray()
-                val list = (0 until arr.length()).map { i ->
-                    val d = arr.getJSONObject(i)
-                    TelegramDialog(d.getString("name"), d.getLong("id"))
+        var lastConnectError: Exception? = null
+        repeat(15) { attempt ->
+            val conn = URL("$BASE/api/telegram/login/dialogs").openConnection() as HttpURLConnection
+            conn.connectTimeout = 3000
+            conn.readTimeout = 20000
+            try {
+                val code = conn.responseCode
+                val stream = if (code in 200..299) conn.inputStream else conn.errorStream
+                val body = stream?.bufferedReader()?.use { it.readText() } ?: ""
+                val o = if (body.isNotBlank()) JSONObject(body) else JSONObject()
+                if (code in 200..299) {
+                    val arr = o.optJSONArray("dialogs") ?: JSONArray()
+                    val list = (0 until arr.length()).map { i ->
+                        val d = arr.getJSONObject(i)
+                        TelegramDialog(d.getString("name"), d.getLong("id"))
+                    }
+                    return@withContext list to null
+                } else {
+                    return@withContext null to (o.optNullableString("error") ?: "HTTP $code")
                 }
-                list to null
-            } else {
-                null to (o.optNullableString("error") ?: "HTTP $code")
+            } catch (e: java.net.ConnectException) {
+                lastConnectError = e
+                if (attempt < 14) Thread.sleep(1000)
+            } catch (e: Exception) {
+                return@withContext null to (e.message ?: "Unbekannter Fehler")
+            } finally {
+                conn.disconnect()
             }
-        } catch (e: Exception) {
-            null to (e.message ?: "Unbekannter Fehler")
-        } finally {
-            conn.disconnect()
         }
+        null to "Backend nicht erreichbar: ${lastConnectError?.message ?: "Verbindung fehlgeschlagen"}"
     }
 
     /** Speichert die angetippte Kanalauswahl (Name -> ID) dauerhaft in der config.json. */
@@ -233,20 +250,27 @@ object ApiClient {
     }
 
     private suspend fun singleAttempt(urlStr: String): Pair<Boolean, String?> = withContext(Dispatchers.IO) {
-        val conn = URL(urlStr).openConnection() as HttpURLConnection
-        conn.connectTimeout = 5000
-        conn.readTimeout = 45000
-        try {
-            val code = conn.responseCode
-            val stream = if (code in 200..299) conn.inputStream else conn.errorStream
-            val body = stream?.bufferedReader()?.use { it.readText() } ?: ""
-            val o = if (body.isNotBlank()) JSONObject(body) else JSONObject()
-            if (code in 200..299) true to null else false to (o.optNullableString("error") ?: "HTTP $code")
-        } catch (e: Exception) {
-            false to (e.message ?: "Unbekannter Fehler")
-        } finally {
-            conn.disconnect()
+        var lastConnectError: Exception? = null
+        repeat(15) { attempt ->
+            val conn = URL(urlStr).openConnection() as HttpURLConnection
+            conn.connectTimeout = 3000
+            conn.readTimeout = 45000
+            try {
+                val code = conn.responseCode
+                val stream = if (code in 200..299) conn.inputStream else conn.errorStream
+                val body = stream?.bufferedReader()?.use { it.readText() } ?: ""
+                val o = if (body.isNotBlank()) JSONObject(body) else JSONObject()
+                return@withContext if (code in 200..299) true to null else false to (o.optNullableString("error") ?: "HTTP $code")
+            } catch (e: java.net.ConnectException) {
+                lastConnectError = e
+                if (attempt < 14) Thread.sleep(1000)
+            } catch (e: Exception) {
+                return@withContext false to (e.message ?: "Unbekannter Fehler")
+            } finally {
+                conn.disconnect()
+            }
         }
+        false to "Backend nicht erreichbar: ${lastConnectError?.message ?: "Verbindung fehlgeschlagen"}"
     }
 
     suspend fun getStalkerProfiles(): List<StalkerProfile> {
