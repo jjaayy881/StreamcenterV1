@@ -606,7 +606,8 @@ class AsyncStalkerPortal:
         try:
             async with session.get(url, params=params, headers=self._headers(include_auth=True),
                                     cookies=self._cookies(), timeout=aiohttp.ClientTimeout(total=8)) as resp:
-                data = await self._safe_json(resp)
+                raw_text = await resp.text()
+                data = await self._safe_json_from_text(raw_text)
         except Exception as e:
             log("INFO", f"get_short_epg({ch_id}) Anfrage fehlgeschlagen: {e}")
             return None, None
@@ -624,7 +625,10 @@ class AsyncStalkerPortal:
                 entries = first_val if isinstance(first_val, list) else []
 
         if not entries or not isinstance(entries[0], dict):
-            log("INFO", f"get_short_epg({ch_id}) leere/unerwartete Antwort: {data}")
+            # Bei leerer/unerwarteter Antwort die ersten 200 Zeichen des ROHTEXTS mitloggen -
+            # falls das Portal bei zu vielen parallelen Anfragen eine HTML-Fehler-/Blockseite
+            # statt echtem JSON zurueckgibt, sieht man das hier sofort (statt nur "{}").
+            log("INFO", f"get_short_epg({ch_id}) leere/unerwartete Antwort, Rohtext: {raw_text[:200]!r}")
             return None, None
         entry = entries[0]
         name = entry.get("name") or entry.get("title")
@@ -998,7 +1002,10 @@ async def _enrich_itv_nodes_with_epg(session, node_chid_pairs):
     ueber Stalkers eigenen EPG-Endpunkt statt TMDB."""
     if not stalker_portal or not node_chid_pairs:
         return
-    semaphore = asyncio.Semaphore(8)
+    # Bewusst niedrig gehalten (viele Portale drosseln/blocken bei zu vielen parallelen
+    # get_short_epg-Anfragen) - lieber ein paar Sekunden laenger warten als vom Anbieter
+    # als Bot behandelt und mit leeren/HTML-Antworten abgespeist zu werden.
+    semaphore = asyncio.Semaphore(3)
 
     async def _one(node, ch_id):
         async with semaphore:
@@ -1007,6 +1014,8 @@ async def _enrich_itv_nodes_with_epg(session, node_chid_pairs):
             except Exception as e:
                 log("INFO", f"EPG-Anreicherung fuer Kanal {ch_id} fehlgeschlagen: {e}")
                 return
+            finally:
+                await asyncio.sleep(0.15)  # kleine Pause, um das Portal nicht zu fluten
             if name:
                 node["overview"] = f"{name} \u2013 {descr}" if descr else name
 
