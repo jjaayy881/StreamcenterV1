@@ -628,13 +628,17 @@ class AsyncStalkerPortal:
             async with session.get(url, params=params, headers=self._headers(include_auth=True),
                                     cookies=self._cookies(), timeout=aiohttp.ClientTimeout(total=25)) as resp:
                 self._update_session_cookies(resp)
-                data = await self._safe_json(resp)
+                raw_text = await resp.text()
+                data = await self._safe_json_from_text(raw_text)
         except Exception as e:
             log("INFO", f"get_bulk_epg fehlgeschlagen: {e}")
             return {}
         js = data.get("js") or {}
         epg_data = js.get("data")
-        return epg_data if isinstance(epg_data, dict) else {}
+        if not isinstance(epg_data, dict) or not epg_data:
+            log("INFO", f"get_bulk_epg leere/unerwartete Antwort, Rohtext: {raw_text[:300]!r}")
+            return {}
+        return epg_data
 
     async def get_short_epg(self, session, ch_id, size=1):
         """Kurz-EPG (aktuell laufende Sendung) fuer einen Live-Kanal - Ministra-Standard-
@@ -1071,6 +1075,8 @@ async def _enrich_itv_nodes_with_epg(chid_list):
                 descr = entry.get("descr") or entry.get("description")
                 if name:
                     STALKER_EPG_CACHE[ch_id_str] = f"{name} \u2013 {descr}" if descr else name
+        else:
+            log("INFO", "Bulk-EPG leer/nicht unterstuetzt - falle zurueck auf get_short_epg pro Kanal")
 
         missing = [c for c in chid_list if str(c) not in STALKER_EPG_CACHE]
         for ch_id in missing:
