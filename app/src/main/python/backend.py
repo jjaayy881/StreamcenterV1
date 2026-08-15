@@ -474,6 +474,13 @@ class AsyncStalkerPortal:
         self.token_timestamp = 0.0
         self.random_value = ''.join(random.choices('0123456789abcdef', k=40))
         self.api_path = None  # wird beim ersten erfolgreichen handshake() ermittelt
+        # Manche Portale setzen zusaetzlich eigene Session-Cookies (z.B. PHPSESSID) beim
+        # Handshake, die bei folgenden Anfragen erwartet werden - unabhaengig vom "token".
+        # Da wir fuer Hintergrund-Tasks (z.B. EPG) bewusst eine NEUE aiohttp.ClientSession
+        # oeffnen (um nicht an eine einzelne Request-Handler-Lebensdauer gebunden zu sein),
+        # gehen solche Cookies sonst verloren. Deshalb hier am Portal-Objekt selbst
+        # gespeichert und bei jeder Anfrage manuell mitgeschickt.
+        self._session_cookies = {}
 
     def _headers(self, include_auth=False):
         referer_dir = "/stalker_portal/c/index.html" if (self.api_path or "").startswith("/stalker_portal") else "/c/index.html"
@@ -492,7 +499,17 @@ class AsyncStalkerPortal:
         cookies = {"mac": self.mac, "stb_lang": "en", "timezone": "Europe/Paris"}
         if self.token:
             cookies["token"] = self.token
+        cookies.update(self._session_cookies)  # Portal-eigene Cookies (PHPSESSID etc.)
         return cookies
+
+    def _update_session_cookies(self, resp):
+        """Merkt sich Cookies, die das Portal in der Antwort setzt (z.B. PHPSESSID) -
+        muss nach JEDER Anfrage aufgerufen werden, damit spaetere Anfragen (auch in einer
+        anderen aiohttp.ClientSession) als "dieselbe Portal-Sitzung" erkannt werden."""
+        for name, morsel in resp.cookies.items():
+            if self._session_cookies.get(name) != morsel.value:
+                log("INFO", f"Portal setzt Cookie: {name}={morsel.value[:20]!r}...")
+            self._session_cookies[name] = morsel.value
 
     async def _safe_json(self, resp):
         """Manche Portale antworten mit HTTP 200 und Body 'null' (z.B. bei abgelaufenem
@@ -531,6 +548,7 @@ class AsyncStalkerPortal:
         try:
             async with session.get(url, headers=headers, cookies=self._cookies(),
                                     timeout=aiohttp.ClientTimeout(total=8)) as resp:
+                self._update_session_cookies(resp)
                 data = await self._safe_json(resp)
         except Exception as e:
             log("INFO", f"Stalker-Handshake auf {path} fehlgeschlagen: {e}")
@@ -583,6 +601,7 @@ class AsyncStalkerPortal:
         }
         async with session.get(url, params=params, headers=self._headers(include_auth=True),
                                 cookies=self._cookies(), timeout=aiohttp.ClientTimeout(total=10)) as resp:
+            self._update_session_cookies(resp)
             data = await self._safe_json(resp)
         js = data.get("js") or {}
         if js.get("token"):
@@ -607,6 +626,7 @@ class AsyncStalkerPortal:
         try:
             async with session.get(url, params=params, headers=self._headers(include_auth=True),
                                     cookies=self._cookies(), timeout=aiohttp.ClientTimeout(total=8)) as resp:
+                self._update_session_cookies(resp)
                 raw_text = await resp.text()
                 data = await self._safe_json_from_text(raw_text)
         except Exception as e:
@@ -644,6 +664,7 @@ class AsyncStalkerPortal:
             url = f"{self.portal_url}{self.api_path}?type=vod&action=get_categories&JsHttpRequest=1-xml"
         async with session.get(url, headers=self._headers(include_auth=True), cookies=self._cookies(),
                                 timeout=aiohttp.ClientTimeout(total=10)) as resp:
+            self._update_session_cookies(resp)
             data = await self._safe_json(resp)
         raw = data.get("js") or []
         if isinstance(raw, dict):
@@ -672,6 +693,7 @@ class AsyncStalkerPortal:
         params.update(extra_params)
         async with session.get(url, params=params, headers=self._headers(include_auth=True), cookies=self._cookies(),
                                 timeout=aiohttp.ClientTimeout(total=15)) as resp:
+            self._update_session_cookies(resp)
             data = await self._safe_json(resp)
         js = data.get("js") or {}
         items = js.get("data") or []
@@ -761,6 +783,7 @@ class AsyncStalkerPortal:
         params = {"action": "create_link", "type": stream_type, "cmd": cmd, "JsHttpRequest": "1-xml"}
         async with session.get(url, params=params, headers=self._headers(include_auth=True), cookies=self._cookies(),
                                 timeout=aiohttp.ClientTimeout(total=10)) as resp:
+            self._update_session_cookies(resp)
             status = resp.status
             raw_text = await resp.text()
             data = await self._safe_json_from_text(raw_text)
