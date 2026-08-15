@@ -44,7 +44,8 @@ data class StalkerNode(
     val streamUrl: String?,
     val categoryId: String?,
     val movieId: String?,
-    val seasonId: String?
+    val seasonId: String?,
+    val overview: String? = null
 )
 
 object ApiClient {
@@ -305,7 +306,8 @@ object ApiClient {
                 streamUrl = o.optNullableString("stream_url"),
                 categoryId = o.optNullableString("category_id"),
                 movieId = o.optNullableString("movie_id"),
-                seasonId = o.optNullableString("season_id")
+                seasonId = o.optNullableString("season_id"),
+                overview = o.optNullableString("overview")
             )
         }
     }

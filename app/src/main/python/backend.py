@@ -593,6 +593,42 @@ class AsyncStalkerPortal:
             await self.handshake(session)
             await self.get_profile(session)
 
+    async def get_short_epg(self, session, ch_id, size=1):
+        """Kurz-EPG (aktuell laufende Sendung) fuer einen Live-Kanal - Ministra-Standard-
+        Endpunkt. Liefert (titel, beschreibung), beides ggf. None. Wirft absichtlich nie -
+        EPG ist ein "nice to have", ein einzelner fehlgeschlagener Kanal soll nicht die
+        ganze Kanalliste kaputt machen. Portale liefern die Antwort in leicht
+        unterschiedlichen Formen, daher wird hier defensiv geparst."""
+        await self.ensure_token(session)
+        url = f"{self.portal_url}{self.api_path}"
+        params = {"type": "itv", "action": "get_short_epg", "ch_id": str(ch_id),
+                   "size": str(size), "JsHttpRequest": "1-xml"}
+        try:
+            async with session.get(url, params=params, headers=self._headers(include_auth=True),
+                                    cookies=self._cookies(), timeout=aiohttp.ClientTimeout(total=8)) as resp:
+                data = await self._safe_json(resp)
+        except Exception:
+            return None, None
+
+        js = data.get("js")
+        entries = []
+        if isinstance(js, list):
+            entries = js
+        elif isinstance(js, dict):
+            by_channel = js.get(str(ch_id))
+            if isinstance(by_channel, list):
+                entries = by_channel
+            elif js:
+                first_val = next(iter(js.values()), None)
+                entries = first_val if isinstance(first_val, list) else []
+
+        if not entries or not isinstance(entries[0], dict):
+            return None, None
+        entry = entries[0]
+        name = entry.get("name") or entry.get("title")
+        descr = entry.get("descr") or entry.get("description")
+        return name, descr
+
     async def get_categories(self, session, cat_type):
         await self.ensure_token(session)
         if cat_type == "itv":
@@ -784,7 +820,7 @@ def _stalker_poster(item):
 
 
 def _stalker_node(id_=None, title=None, poster_url=None, stream_url=None,
-                   category_id=None, movie_id=None, season_id=None):
+                   category_id=None, movie_id=None, season_id=None, overview=None):
     return {
         "id": str(id_) if id_ is not None else None,
         "title": title or "Ohne Titel",
@@ -793,6 +829,7 @@ def _stalker_node(id_=None, title=None, poster_url=None, stream_url=None,
         "category_id": str(category_id) if category_id is not None else None,
         "movie_id": str(movie_id) if movie_id is not None else None,
         "season_id": str(season_id) if season_id is not None else None,
+        "overview": overview,
     }
 
 
@@ -953,6 +990,26 @@ async def api_stalker_categories(request):
     return json_response_cors(nodes)
 
 
+async def _enrich_itv_nodes_with_epg(session, node_chid_pairs):
+    """Fuellt node['overview'] mit der aktuell laufenden Sendung (Titel + Beschreibung),
+    parallel mit Limit - genau wie enrich_movies_with_tmdb() bei Telegram-Filmen, nur eben
+    ueber Stalkers eigenen EPG-Endpunkt statt TMDB."""
+    if not stalker_portal or not node_chid_pairs:
+        return
+    semaphore = asyncio.Semaphore(8)
+
+    async def _one(node, ch_id):
+        async with semaphore:
+            try:
+                name, descr = await stalker_portal.get_short_epg(session, ch_id)
+            except Exception:
+                return
+            if name:
+                node["overview"] = f"{name} \u2013 {descr}" if descr else name
+
+    await asyncio.gather(*(_one(n, c) for n, c in node_chid_pairs))
+
+
 async def api_stalker_items(request):
     if not stalker_portal or not STALKER_STATUS["connected"]:
         return json_response_cors({"error": STALKER_STATUS["error"] or "Stalker nicht verbunden"}, status=503)
@@ -963,31 +1020,39 @@ async def api_stalker_items(request):
     try:
         async with aiohttp.ClientSession() as session:
             items = await stalker_portal.get_items(session, cat_type, cat_id)
+
+            nodes = []
+            itv_pairs = []  # (node, ch_id) - fuer die parallele EPG-Anreicherung danach
+            for it in items:
+                title = it.get("name") or "Ohne Titel"
+                poster = _stalker_poster(it)
+                if cat_type == "itv":
+                    cmd = it.get("cmd")
+                    ch_id = it.get("id")
+                    if not cmd:
+                        continue
+                    stream_url = f"http://127.0.0.1:{PORT}/api/stalker/play?kind=itv&cmd=" + urllib.parse.quote(cmd, safe="")
+                    node = _stalker_node(id_=ch_id, title=title, poster_url=poster, stream_url=stream_url)
+                    nodes.append(node)
+                    if ch_id:
+                        itv_pairs.append((node, ch_id))
+                elif cat_type == "vod":
+                    movie_id = it.get("id")
+                    if not movie_id:
+                        continue
+                    stream_url = f"http://127.0.0.1:{PORT}/api/stalker/play?kind=vod&movie_id=" + urllib.parse.quote(str(movie_id))
+                    nodes.append(_stalker_node(id_=movie_id, title=title, poster_url=poster, stream_url=stream_url))
+                else:  # series -> navigiert erst zu Staffeln, kein direkter stream_url
+                    movie_id = it.get("id")
+                    if not movie_id:
+                        continue
+                    nodes.append(_stalker_node(id_=movie_id, title=title, poster_url=poster, movie_id=movie_id))
+
+            if cat_type == "itv" and itv_pairs:
+                await _enrich_itv_nodes_with_epg(session, itv_pairs)
     except Exception as e:
         log("FEHLER", f"Stalker-Items fehlgeschlagen: {e}")
         return json_response_cors({"error": str(e)}, status=500)
-
-    nodes = []
-    for it in items:
-        title = it.get("name") or "Ohne Titel"
-        poster = _stalker_poster(it)
-        if cat_type == "itv":
-            cmd = it.get("cmd")
-            if not cmd:
-                continue
-            stream_url = f"http://127.0.0.1:{PORT}/api/stalker/play?kind=itv&cmd=" + urllib.parse.quote(cmd, safe="")
-            nodes.append(_stalker_node(id_=it.get("id"), title=title, poster_url=poster, stream_url=stream_url))
-        elif cat_type == "vod":
-            movie_id = it.get("id")
-            if not movie_id:
-                continue
-            stream_url = f"http://127.0.0.1:{PORT}/api/stalker/play?kind=vod&movie_id=" + urllib.parse.quote(str(movie_id))
-            nodes.append(_stalker_node(id_=movie_id, title=title, poster_url=poster, stream_url=stream_url))
-        else:  # series -> navigiert erst zu Staffeln, kein direkter stream_url
-            movie_id = it.get("id")
-            if not movie_id:
-                continue
-            nodes.append(_stalker_node(id_=movie_id, title=title, poster_url=poster, movie_id=movie_id))
     return json_response_cors(nodes)
 
 

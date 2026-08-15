@@ -503,7 +503,8 @@ class StalkerFragment : Fragment(R.layout.fragment_stalker) {
         id = node.id ?: node.title,
         title = node.title,
         streamUrl = node.streamUrl ?: "",
-        posterUrl = node.posterUrl
+        posterUrl = node.posterUrl,
+        overview = node.overview
     )
 
     private fun playSingle(url: String, title: String) = openPlayer(listOf(url), listOf(title), 0)
