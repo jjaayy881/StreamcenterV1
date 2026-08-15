@@ -489,6 +489,7 @@ class AsyncStalkerPortal:
             "User-Agent": STALKER_UA,
             "Referer": f"{self.portal_url}{referer_dir}",
             "X-User-Agent": "Model: MAG250; Link: WiFi",
+            "X-User-MAC": self.mac,
             "Connection": "Close",
         }
         if include_auth and self.token:
