@@ -607,7 +607,8 @@ class AsyncStalkerPortal:
             async with session.get(url, params=params, headers=self._headers(include_auth=True),
                                     cookies=self._cookies(), timeout=aiohttp.ClientTimeout(total=8)) as resp:
                 data = await self._safe_json(resp)
-        except Exception:
+        except Exception as e:
+            log("INFO", f"get_short_epg({ch_id}) Anfrage fehlgeschlagen: {e}")
             return None, None
 
         js = data.get("js")
@@ -623,6 +624,7 @@ class AsyncStalkerPortal:
                 entries = first_val if isinstance(first_val, list) else []
 
         if not entries or not isinstance(entries[0], dict):
+            log("INFO", f"get_short_epg({ch_id}) leere/unerwartete Antwort: {data}")
             return None, None
         entry = entries[0]
         name = entry.get("name") or entry.get("title")
@@ -1002,7 +1004,8 @@ async def _enrich_itv_nodes_with_epg(session, node_chid_pairs):
         async with semaphore:
             try:
                 name, descr = await stalker_portal.get_short_epg(session, ch_id)
-            except Exception:
+            except Exception as e:
+                log("INFO", f"EPG-Anreicherung fuer Kanal {ch_id} fehlgeschlagen: {e}")
                 return
             if name:
                 node["overview"] = f"{name} \u2013 {descr}" if descr else name
