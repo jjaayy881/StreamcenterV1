@@ -613,6 +613,29 @@ class AsyncStalkerPortal:
             await self.handshake(session)
             await self.get_profile(session)
 
+    async def get_bulk_epg(self, session, period_hours=24):
+        """Manche Portale (Xtream/Ministra-Hybride) unterstuetzen zusaetzlich zum
+        "offiziellen" Ministra-Standard (get_short_epg, ein Aufruf pro Kanal) einen
+        Bulk-Endpunkt, der das EPG fuer ALLE Kanaele auf einmal liefert - deutlich
+        schneller. Format: {"js": {"data": {"<ch_id>": [{...}, ...]}}}.
+        Liefert {} falls das Portal diesen Endpunkt nicht unterstuetzt (kein Fehler,
+        einfach stiller Fallback auf get_short_epg)."""
+        await self.ensure_token(session)
+        url = f"{self.portal_url}{self.api_path}"
+        params = {"type": "itv", "action": "get_epg_info", "period": str(period_hours),
+                   "JsHttpRequest": "1-xml"}
+        try:
+            async with session.get(url, params=params, headers=self._headers(include_auth=True),
+                                    cookies=self._cookies(), timeout=aiohttp.ClientTimeout(total=25)) as resp:
+                self._update_session_cookies(resp)
+                data = await self._safe_json(resp)
+        except Exception as e:
+            log("INFO", f"get_bulk_epg fehlgeschlagen: {e}")
+            return {}
+        js = data.get("js") or {}
+        epg_data = js.get("data")
+        return epg_data if isinstance(epg_data, dict) else {}
+
     async def get_short_epg(self, session, ch_id, size=1):
         """Kurz-EPG (aktuell laufende Sendung) fuer einen Live-Kanal - Ministra-Standard-
         Endpunkt. Liefert (titel, beschreibung), beides ggf. None. Wirft absichtlich nie -
@@ -1023,16 +1046,34 @@ async def api_stalker_categories(request):
 async def _enrich_itv_nodes_with_epg(chid_list):
     """Fuellt STALKER_EPG_CACHE mit der aktuell laufenden Sendung pro Kanal - laeuft als
     Hintergrund-Task, damit die Kanalliste selbst nicht darauf warten muss.
-    BEWUSST streng nacheinander (kein Parallelismus): viele Portale erlauben pro MAC-Adresse
-    nur eine aktive Verbindung gleichzeitig und antworten bei ueberzaehligen parallelen
-    Anfragen mit einer leeren Antwort statt einem Fehlercode - genau das Muster, das wir
-    beim Testen gesehen haben."""
+    Probiert zuerst den Bulk-Endpunkt (ein Aufruf fuer ALLE Kanaele, siehe get_bulk_epg) -
+    unterstuetzt nicht jedes Portal, dafuer wenn vorhanden viel schneller. Fuer alles, was
+    davon nicht abgedeckt wird, klassisch einzeln nachfragen (streng nacheinander - manche
+    Portale vertragen keine parallelen Anfragen pro MAC-Adresse)."""
     if not stalker_portal:
         return
     async with aiohttp.ClientSession() as session:
-        for ch_id in chid_list:
-            if str(ch_id) in STALKER_EPG_CACHE:
-                continue
+        try:
+            bulk = await stalker_portal.get_bulk_epg(session)
+        except Exception as e:
+            log("INFO", f"Bulk-EPG fehlgeschlagen: {e}")
+            bulk = {}
+
+        if bulk:
+            log("INFO", f"Bulk-EPG erfolgreich: {len(bulk)} Kanaele geliefert")
+            for ch_id_str, entries in bulk.items():
+                if ch_id_str in STALKER_EPG_CACHE or not entries:
+                    continue
+                entry = entries[0] if isinstance(entries, list) else None
+                if not isinstance(entry, dict):
+                    continue
+                name = entry.get("name") or entry.get("title")
+                descr = entry.get("descr") or entry.get("description")
+                if name:
+                    STALKER_EPG_CACHE[ch_id_str] = f"{name} \u2013 {descr}" if descr else name
+
+        missing = [c for c in chid_list if str(c) not in STALKER_EPG_CACHE]
+        for ch_id in missing:
             try:
                 name, descr = await stalker_portal.get_short_epg(session, ch_id)
             except Exception as e:
@@ -1040,7 +1081,7 @@ async def _enrich_itv_nodes_with_epg(chid_list):
                 name, descr = None, None
             if name:
                 STALKER_EPG_CACHE[str(ch_id)] = f"{name} \u2013 {descr}" if descr else name
-            await asyncio.sleep(0.3)  # Portal Zeit zum "Luft holen" geben zwischen Anfragen
+            await asyncio.sleep(0.3)
 
 
 async def api_stalker_epg(request):
