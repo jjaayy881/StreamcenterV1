@@ -160,12 +160,12 @@ object ApiClient {
      * Wartet (wie getText()) bis zu ~15s auf den Verbindungsaufbau, falls das Backend
      * gerade erst hochfaehrt (z.B. direkt nach dem Speichern der config.json) - ein
      * "Failed to connect" in diesem Moment ist kein echter Fehler, sondern nur zu frueh. */
-    private suspend fun singleAttemptWithStatus(urlStr: String): Pair<String?, String?> = withContext(Dispatchers.IO) {
+    private suspend fun singleAttemptWithStatus(urlStr: String, readTimeoutMs: Int = 45000): Pair<String?, String?> = withContext(Dispatchers.IO) {
         var lastConnectError: Exception? = null
         repeat(15) { attempt ->
             val conn = URL(urlStr).openConnection() as HttpURLConnection
             conn.connectTimeout = 3000
-            conn.readTimeout = 45000
+            conn.readTimeout = readTimeoutMs
             try {
                 val code = conn.responseCode
                 val stream = if (code in 200..299) conn.inputStream else conn.errorStream
@@ -186,10 +186,13 @@ object ApiClient {
     }
 
     /** Schritt 1: Telefonnummer senden -> Telegram schickt einen Code per SMS/App.
-     * Erfolg liefert status="code_sent". */
+     * Erfolg liefert status="code_sent".
+     * Grosszuegiges Zeitlimit: beim allerersten Login muss Pyrogram einen kompletten
+     * DH-Schluesselaustausch mit Telegram durchfuehren, das kann auf dem Handy spuerbar
+     * laenger dauern als ein normaler API-Aufruf. */
     suspend fun telegramLoginStart(phone: String): Pair<String?, String?> {
         val enc = URLEncoder.encode(phone, "UTF-8")
-        return singleAttemptWithStatus("$BASE/api/telegram/login/start?phone=$enc")
+        return singleAttemptWithStatus("$BASE/api/telegram/login/start?phone=$enc", readTimeoutMs = 90000)
     }
 
     /** Schritt 2: erhaltenen Code bestaetigen. Erfolg liefert entweder status="ok"

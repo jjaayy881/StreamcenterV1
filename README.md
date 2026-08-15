@@ -1,22 +1,48 @@
 # Stream Center TV
 
-Native Android/Fire-TV-App: Kotlin-UI (2 Tabs: Telegram, LiveTV) + eingebettetes
-Python-Backend (Chaquopy, dein bisheriges `aiohttp`/`pyrogram`-Skript ohne
-HTML-Frontend) + LibVLC (`MediaListPlayer`) fürs Zappen per D-Pad.
+Native Android/Fire-TV-App für Video-Streaming aus mehreren Quellen: eigene
+Telegram-Kanäle, IPTV/VOD über Stalker(Ministra)-Portale, M3U-Playlists und die
+ARD/ZDF-Mediathek. Ein eingebettetes Python-Backend (Chaquopy) übernimmt die
+gesamte Server-Logik, die Kotlin-Oberfläche ist auf Fernbedienungs-Bedienung
+(D-Pad) ausgelegt.
+
+## Inhalt
+
+- [Features](#features)
+- [Bauen](#bauen)
+- [Einrichtung auf dem Gerät](#einrichtung-auf-dem-gerät)
+- [Zappen](#zappen)
+- [TMDB-Filmbeschreibungen (optional)](#tmdb-filmbeschreibungen-optional)
+- [Bekannte Risiken / offene Punkte](#bekannte-risiken--offene-punkte)
+- [Projektstruktur](#projektstruktur)
+
+## Features
+
+- **Telegram**: eigene Kanäle (inkl. Foren/Topics) als Filmbibliothek, mit
+  automatischer TMDB-Anreicherung (Poster, Beschreibung, Bewertung)
+- **Stalker/Ministra-Portale**: Live-TV, VOD, Serien - inkl. Poster und
+  EPG ("gerade läuft") für Live-Kanäle, bis zu 3 Portale parallel hinterlegbar
+- **M3U-Playlists**: mit Genre-Filter
+- **Mediathek**: ARD/ZDF-Suche direkt in der App
+- **Favoriten**, Zapping per D-Pad, LibVLC-Player mit breiter Codec-Unterstützung
+- **Einrichtung ohne Bastelei**: nur `api_id`/`api_hash` nötig, Telegram-Login
+  (Telefonnummer + Code) und Kanalauswahl laufen direkt in der App
 
 ## Bauen
 
 **Option A: Android Studio**
 1. Projektordner öffnen (Android Studio erkennt Gradle-Projekt automatisch, generiert
    `gradlew`/Wrapper-Dateien beim ersten Sync selbst).
-2. Gradle-Sync abwarten (lädt Chaquopy- und LibVLC-Abhängigkeiten herunter).
+2. Gradle-Sync abwarten (lädt Chaquopy-, LibVLC- und Glide-Abhängigkeiten herunter).
 3. `Build > Build Bundle(s) / APK(s) > Build APK(s)`.
 
 **Option B: GitHub Actions**
 1. Repo auf GitHub pushen.
-2. Tab "Actions" → Workflow "Build APK" manuell starten (`workflow_dispatch`) oder push auf `main`.
-3. Fertige APK unter "Releases" (nicht "Artifacts") herunterladen - landet dort automatisch
-   nach jedem erfolgreichen Build (verbraucht keinen Artifact-Speicherplatz).
+2. Tab "Actions" → Workflow "Build APK" manuell starten (`workflow_dispatch`) oder
+   push auf `main`.
+3. Fertige APK unter "Releases" (nicht "Artifacts") herunterladen - landet dort
+   automatisch nach jedem erfolgreichen Build (verbraucht keinen
+   Artifact-Speicherplatz und bleibt dauerhaft erhalten).
 
 ## Einrichtung auf dem Gerät
 
@@ -30,6 +56,7 @@ Beim ersten Start fragt die App nach einer minimalen `config.json` - nur noch
 ```
 `api_id`/`api_hash` holst du dir einmalig unter https://my.telegram.org/apps.
 Alles Weitere passiert danach direkt in der App:
+
 1. **Login**: Telefonnummer eingeben, per SMS/App erhaltenen Code eintippen, bei
    aktivierter 2FA zusätzlich das Cloud-Passwort. Der `session_string` wird dabei
    intern erzeugt und automatisch in die `config.json` nachgetragen - du siehst
@@ -39,19 +66,21 @@ Alles Weitere passiert danach direkt in der App:
    automatisch in die `config.json` geschrieben - kein manuelles Heraussuchen von
    Kanal-IDs mehr nötig.
 
-Das externe `telegram_info.py`-Skript (Telethon) wird dafür nicht mehr benötigt.
-
-Die `config.json` selbst kommt wie bisher auf zwei Wegen aufs Gerät:
+Die `config.json` selbst kommt auf zwei Wegen aufs Gerät:
 - **Datei auswählen**: falls sie auf dem Gerät/USB-Stick liegt.
 - **Text einfügen**: Inhalt in das Feld einfügen (z.B. per Fire-TV-Fernbedienung
   mühsam, aber machbar - alternativ Bluetooth-Tastatur nutzen).
+
+Stalker-Portale (bis zu 3) und M3U-Playlisten werden direkt im jeweiligen Tab
+der App hinterlegt, nicht über die `config.json`.
 
 ## Zappen
 
 Im Player: **D-Pad hoch/runter** (oder die Kanal-Tasten der Fernbedienung) wechseln
 zum nächsten/vorherigen Eintrag der jeweils aktuell geöffneten Liste (alle Filme
-eines Telegram-Themas bzw. alle Kanäle der aktuellen Genre-Auswahl) - ganz ohne
-App-Wechsel. **OK/Enter** pausiert/spielt fort, **links/rechts** spult bei VOD-Inhalten.
+eines Telegram-Themas, alle Kanäle der aktuellen Genre-Auswahl, o.ä.) - ganz ohne
+App-Wechsel. **OK/Enter** pausiert/spielt fort, **links/rechts** spult bei
+VOD-Inhalten.
 
 ## TMDB-Filmbeschreibungen (optional)
 
@@ -60,13 +89,12 @@ Trag in deiner `config.json` optional ein `tmdb_api_key`-Feld ein:
 {
   "api_id": "...",
   "api_hash": "...",
-  "session_string": "...",
-  "channels": { ... },
   "tmdb_api_key": "DEIN_TMDB_API_KEY"
 }
 ```
 Kostenlosen Key gibt's unter https://www.themoviedb.org/settings/api. Ohne das
-Feld funktioniert alles wie bisher, nur ohne Beschreibungen/Bewertungen.
+Feld funktionieren Telegram-Filme weiterhin, nur ohne Poster/Beschreibung/Bewertung
+(Stalker-Poster sind davon unabhängig, die kommen direkt vom Portal).
 
 Der Server leitet aus dem Telegram-Dateinamen automatisch Titel + Jahr ab
 (z.B. `Der.Pate.1972.1080p.BluRay.x264.mkv` -> "Der Pate", 1972) und fragt
@@ -75,32 +103,34 @@ das ist rein heuristisch.
 
 ## Bekannte Risiken / offene Punkte
 
-- **`aiohttp` unter Chaquopy**: Chaquopy pflegt eine eigene Liste vorkompilierter
-  Wheels für Android. Ob `aiohttp` (nutzt teils C-Erweiterungen) dort verfügbar
-  ist, muss der erste Gradle-Sync zeigen. Falls der `pip install`-Schritt in
-  `app/build.gradle` fehlschlägt: mir Bescheid geben, dann bauen wir das Backend
-  probehalber auf `http.server`/reinem `asyncio`-Networking ohne `aiohttp` um.
-- **`tgcrypto`**: bewusst NICHT installiert (keine Android-Wheels), Pyrogram nutzt
-  automatisch die reine Python-Implementierung (`pyaes`) - etwas langsamer beim
-  Ver-/Entschlüsseln, für normalen Gebrauch aber unproblematisch.
+- **`tgcrypto`**: wird installiert und beschleunigt Pyrogrums Ver-/Entschlüsselung;
+  falls der Build auf einer Architektur fehlschlägt, für die kein vorkompiliertes
+  Wheel existiert, fällt Pyrogram automatisch auf die reine Python-Implementierung
+  zurück (etwas langsamer, aber funktionsfähig).
+- **Stalker-EPG**: der "gerade läuft"-Text für Live-Kanäle wird gedrosselt im
+  Hintergrund nachgeladen (manche Portale reagieren empfindlich auf zu viele
+  parallele Anfragen pro MAC-Adresse) - kann bei sehr großen Kanallisten ein
+  bis zwei Minuten dauern, bis alle Kanäle eine Beschreibung haben.
 - **Icon/Banner**: `ic_launcher.xml` und `tv_banner.xml` sind nur einfarbige
   Platzhalter. Für den Play Store/Fire-TV-Store bitte durch echte Grafiken
   ersetzen (Banner: 320x180dp, Pflichtformat für den Fire-TV-Store-Eintrag).
-- **Ich konnte dieses Projekt in meiner Umgebung nicht kompilieren/testen**
-  (kein Zugriff auf Googles Maven-Server hier) - es ist ein sorgfältig
-  geschriebenes Grundgerüst, aber der erste echte Build-Durchlauf bei dir kann
-  noch kleinere Anpassungen brauchen (z.B. exakte Versionsnummern der
-  Bibliotheken). Schick mir Fehlermeldungen aus Android Studio/den Actions-Logs,
-  dann beheben wir das gezielt.
 
 ## Projektstruktur
 
 ```
-app/src/main/python/backend.py     -> Python-Backend (APIs, Telegram, Proxy)
-app/src/main/java/.../StreamApp.kt -> startet Backend beim App-Start
-app/src/main/java/.../MainActivity.kt      -> 2 Tabs
-app/src/main/java/.../TelegramFragment.kt  -> Kanal > Thema > Filme
-app/src/main/java/.../LiveTvFragment.kt    -> M3U laden, Genre-Filter
-app/src/main/java/.../PlayerActivity.kt    -> LibVLC MediaListPlayer + Zapping
-app/src/main/java/.../SetupActivity.kt     -> config.json hinterlegen
+app/src/main/python/backend.py               Python-Backend (aiohttp): Telegram (Pyrogram),
+                                               Stalker/Ministra, M3U, Mediathek, TMDB, Proxy
+
+app/src/main/java/.../StreamApp.kt            startet das Backend beim App-Start
+app/src/main/java/.../MainActivity.kt         Tab-Host (Telegram/LiveTV/Mediathek/Stalker)
+app/src/main/java/.../TelegramFragment.kt     Kanal -> Thema -> Filme
+app/src/main/java/.../StalkerFragment.kt      Portal-Verwaltung, Kategorien -> Kanäle/VOD/Serien
+app/src/main/java/.../LiveTvFragment.kt       M3U laden, Genre-Filter
+app/src/main/java/.../MediathekFragment.kt    ARD/ZDF-Suche
+app/src/main/java/.../PlayerActivity.kt       LibVLC-Player + Zapping
+app/src/main/java/.../SetupActivity.kt        config.json hinterlegen
+app/src/main/java/.../TelegramLoginActivity.kt   Telefonnummer/Code/2FA-Login
+app/src/main/java/.../ChannelSelectionActivity.kt Kanalauswahl nach dem Login
+app/src/main/java/.../MovieAdapter.kt         Kachel-Liste (Poster + Titel + Beschreibung)
+app/src/main/java/.../FavoritesManager.kt     lokale Favoriten
 ```

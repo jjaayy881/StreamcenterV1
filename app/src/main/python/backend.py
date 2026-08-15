@@ -998,32 +998,26 @@ async def api_stalker_categories(request):
 
 
 async def _enrich_itv_nodes_with_epg(chid_list):
-    """Fuellt STALKER_EPG_CACHE mit der aktuell laufenden Sendung pro Kanal, parallel mit
-    Limit (Rate-Limiting vieler Portale) - laeuft als Hintergrund-Task, damit die
-    Kanalliste selbst NICHT darauf warten muss (bei 70+ Kanaelen mit Drosselung kann das
-    über eine Minute dauern - das wuerde das Zeitlimit auf der App-Seite ueberschreiten
-    und zu einer automatischen Wiederholung der ganzen Anfrage fuehren)."""
+    """Fuellt STALKER_EPG_CACHE mit der aktuell laufenden Sendung pro Kanal - laeuft als
+    Hintergrund-Task, damit die Kanalliste selbst nicht darauf warten muss.
+    BEWUSST streng nacheinander (kein Parallelismus): viele Portale erlauben pro MAC-Adresse
+    nur eine aktive Verbindung gleichzeitig und antworten bei ueberzaehligen parallelen
+    Anfragen mit einer leeren Antwort statt einem Fehlercode - genau das Muster, das wir
+    beim Testen gesehen haben."""
     if not stalker_portal:
         return
-    semaphore = asyncio.Semaphore(3)
-
-    async def _one(ch_id):
-        # Bereits gecachte (auch erfolglose) Kanaele nicht erneut abfragen
-        if str(ch_id) in STALKER_EPG_CACHE:
-            return
-        async with semaphore:
-            async with aiohttp.ClientSession() as session:
-                try:
-                    name, descr = await stalker_portal.get_short_epg(session, ch_id)
-                except Exception as e:
-                    log("INFO", f"EPG-Anreicherung fuer Kanal {ch_id} fehlgeschlagen: {e}")
-                    return
-                finally:
-                    await asyncio.sleep(0.15)  # kleine Pause, um das Portal nicht zu fluten
+    async with aiohttp.ClientSession() as session:
+        for ch_id in chid_list:
+            if str(ch_id) in STALKER_EPG_CACHE:
+                continue
+            try:
+                name, descr = await stalker_portal.get_short_epg(session, ch_id)
+            except Exception as e:
+                log("INFO", f"EPG-Anreicherung fuer Kanal {ch_id} fehlgeschlagen: {e}")
+                name, descr = None, None
             if name:
                 STALKER_EPG_CACHE[str(ch_id)] = f"{name} \u2013 {descr}" if descr else name
-
-    await asyncio.gather(*(_one(c) for c in chid_list))
+            await asyncio.sleep(0.3)  # Portal Zeit zum "Luft holen" geben zwischen Anfragen
 
 
 async def api_stalker_epg(request):
