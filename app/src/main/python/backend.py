@@ -31,6 +31,7 @@ LOGIN_PHONE_NUMBER = None
 LOGIN_PHONE_CODE_HASH = None
 TMDB_API_KEY = None
 TMDB_CACHE = {}
+STALKER_EPG_CACHE = {}  # ch_id (str) -> "Titel" oder "Titel - Beschreibung", nur erfolgreiche Treffer
 
 # Mediathek (portiert aus media.py, hier async statt Threads/Desktop-VLC -
 # Wiedergabe laeuft ueber PlayerActivity/LibVLC statt subprocess.Popen)
@@ -996,30 +997,43 @@ async def api_stalker_categories(request):
     return json_response_cors(nodes)
 
 
-async def _enrich_itv_nodes_with_epg(session, node_chid_pairs):
-    """Fuellt node['overview'] mit der aktuell laufenden Sendung (Titel + Beschreibung),
-    parallel mit Limit - genau wie enrich_movies_with_tmdb() bei Telegram-Filmen, nur eben
-    ueber Stalkers eigenen EPG-Endpunkt statt TMDB."""
-    if not stalker_portal or not node_chid_pairs:
+async def _enrich_itv_nodes_with_epg(chid_list):
+    """Fuellt STALKER_EPG_CACHE mit der aktuell laufenden Sendung pro Kanal, parallel mit
+    Limit (Rate-Limiting vieler Portale) - laeuft als Hintergrund-Task, damit die
+    Kanalliste selbst NICHT darauf warten muss (bei 70+ Kanaelen mit Drosselung kann das
+    über eine Minute dauern - das wuerde das Zeitlimit auf der App-Seite ueberschreiten
+    und zu einer automatischen Wiederholung der ganzen Anfrage fuehren)."""
+    if not stalker_portal:
         return
-    # Bewusst niedrig gehalten (viele Portale drosseln/blocken bei zu vielen parallelen
-    # get_short_epg-Anfragen) - lieber ein paar Sekunden laenger warten als vom Anbieter
-    # als Bot behandelt und mit leeren/HTML-Antworten abgespeist zu werden.
     semaphore = asyncio.Semaphore(3)
 
-    async def _one(node, ch_id):
+    async def _one(ch_id):
+        # Bereits gecachte (auch erfolglose) Kanaele nicht erneut abfragen
+        if str(ch_id) in STALKER_EPG_CACHE:
+            return
         async with semaphore:
-            try:
-                name, descr = await stalker_portal.get_short_epg(session, ch_id)
-            except Exception as e:
-                log("INFO", f"EPG-Anreicherung fuer Kanal {ch_id} fehlgeschlagen: {e}")
-                return
-            finally:
-                await asyncio.sleep(0.15)  # kleine Pause, um das Portal nicht zu fluten
+            async with aiohttp.ClientSession() as session:
+                try:
+                    name, descr = await stalker_portal.get_short_epg(session, ch_id)
+                except Exception as e:
+                    log("INFO", f"EPG-Anreicherung fuer Kanal {ch_id} fehlgeschlagen: {e}")
+                    return
+                finally:
+                    await asyncio.sleep(0.15)  # kleine Pause, um das Portal nicht zu fluten
             if name:
-                node["overview"] = f"{name} \u2013 {descr}" if descr else name
+                STALKER_EPG_CACHE[str(ch_id)] = f"{name} \u2013 {descr}" if descr else name
 
-    await asyncio.gather(*(_one(n, c) for n, c in node_chid_pairs))
+    await asyncio.gather(*(_one(c) for c in chid_list))
+
+
+async def api_stalker_epg(request):
+    """Liefert die bereits im Hintergrund geladenen EPG-Texte fuer die angefragten
+    Kanal-IDs zurueck (nur was schon fertig ist) - die App fragt das kurz nach dem
+    Laden der Kanalliste einmal ab, um die Beschreibungen nachzutragen."""
+    ids_param = request.query.get("ids", "")
+    ids = [i for i in ids_param.split(",") if i]
+    result = {i: STALKER_EPG_CACHE[i] for i in ids if i in STALKER_EPG_CACHE}
+    return json_response_cors(result)
 
 
 async def api_stalker_items(request):
@@ -1032,39 +1046,44 @@ async def api_stalker_items(request):
     try:
         async with aiohttp.ClientSession() as session:
             items = await stalker_portal.get_items(session, cat_type, cat_id)
-
-            nodes = []
-            itv_pairs = []  # (node, ch_id) - fuer die parallele EPG-Anreicherung danach
-            for it in items:
-                title = it.get("name") or "Ohne Titel"
-                poster = _stalker_poster(it)
-                if cat_type == "itv":
-                    cmd = it.get("cmd")
-                    ch_id = it.get("id")
-                    if not cmd:
-                        continue
-                    stream_url = f"http://127.0.0.1:{PORT}/api/stalker/play?kind=itv&cmd=" + urllib.parse.quote(cmd, safe="")
-                    node = _stalker_node(id_=ch_id, title=title, poster_url=poster, stream_url=stream_url)
-                    nodes.append(node)
-                    if ch_id:
-                        itv_pairs.append((node, ch_id))
-                elif cat_type == "vod":
-                    movie_id = it.get("id")
-                    if not movie_id:
-                        continue
-                    stream_url = f"http://127.0.0.1:{PORT}/api/stalker/play?kind=vod&movie_id=" + urllib.parse.quote(str(movie_id))
-                    nodes.append(_stalker_node(id_=movie_id, title=title, poster_url=poster, stream_url=stream_url))
-                else:  # series -> navigiert erst zu Staffeln, kein direkter stream_url
-                    movie_id = it.get("id")
-                    if not movie_id:
-                        continue
-                    nodes.append(_stalker_node(id_=movie_id, title=title, poster_url=poster, movie_id=movie_id))
-
-            if cat_type == "itv" and itv_pairs:
-                await _enrich_itv_nodes_with_epg(session, itv_pairs)
     except Exception as e:
         log("FEHLER", f"Stalker-Items fehlgeschlagen: {e}")
         return json_response_cors({"error": str(e)}, status=500)
+
+    nodes = []
+    itv_chids = []  # fuer den Hintergrund-EPG-Abruf danach
+    for it in items:
+        title = it.get("name") or "Ohne Titel"
+        poster = _stalker_poster(it)
+        if cat_type == "itv":
+            cmd = it.get("cmd")
+            ch_id = it.get("id")
+            if not cmd:
+                continue
+            stream_url = f"http://127.0.0.1:{PORT}/api/stalker/play?kind=itv&cmd=" + urllib.parse.quote(cmd, safe="")
+            # Schon gecachte EPG-Texte (von einem frueheren Aufruf) sofort mitschicken -
+            # sonst blinkt die Beschreibung bei jedem erneuten Oeffnen der Liste kurz weg.
+            overview = STALKER_EPG_CACHE.get(str(ch_id)) if ch_id else None
+            nodes.append(_stalker_node(id_=ch_id, title=title, poster_url=poster, stream_url=stream_url, overview=overview))
+            if ch_id and str(ch_id) not in STALKER_EPG_CACHE:
+                itv_chids.append(ch_id)
+        elif cat_type == "vod":
+            movie_id = it.get("id")
+            if not movie_id:
+                continue
+            stream_url = f"http://127.0.0.1:{PORT}/api/stalker/play?kind=vod&movie_id=" + urllib.parse.quote(str(movie_id))
+            nodes.append(_stalker_node(id_=movie_id, title=title, poster_url=poster, stream_url=stream_url))
+        else:  # series -> navigiert erst zu Staffeln, kein direkter stream_url
+            movie_id = it.get("id")
+            if not movie_id:
+                continue
+            nodes.append(_stalker_node(id_=movie_id, title=title, poster_url=poster, movie_id=movie_id))
+
+    if cat_type == "itv" and itv_chids:
+        # Bewusst NICHT awaiten - die Kanalliste soll sofort zurueckgehen, EPG kommt
+        # per separatem Abruf (api_stalker_epg) kurz danach nach.
+        asyncio.create_task(_enrich_itv_nodes_with_epg(itv_chids))
+
     return json_response_cors(nodes)
 
 
@@ -1886,6 +1905,7 @@ def start_server(config_path):
         app.router.add_get("/api/stalker/profiles", api_stalker_profiles)
         app.router.add_get("/api/stalker/categories", api_stalker_categories)
         app.router.add_get("/api/stalker/items", api_stalker_items)
+        app.router.add_get("/api/stalker/epg", api_stalker_epg)
         app.router.add_get("/api/stalker/seasons", api_stalker_seasons)
         app.router.add_get("/api/stalker/episodes", api_stalker_episodes)
         app.router.add_get("/api/stalker/play", api_stalker_play)

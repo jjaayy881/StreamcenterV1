@@ -13,6 +13,7 @@ import androidx.fragment.app.Fragment
 import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import org.json.JSONObject
 import java.io.File
@@ -432,8 +433,35 @@ class StalkerFragment : Fragment(R.layout.fragment_stalker) {
                 val items = ApiClient.getStalkerItems(target.type, target.categoryId)
                 currentItems = items
                 movieAdapter.update(items.map { toMovie(it) })
+                if (target.type == "itv") pollStalkerEpg(target)
             } catch (e: Exception) {
                 header.showError("Fehler: ${e.message}")
+            }
+        }
+    }
+
+    /** Live-Kanaele: EPG-Beschreibungen laufen im Backend gedrosselt im Hintergrund nach
+     * (siehe api_stalker_epg) und sind beim ersten Laden der Liste meist noch nicht fertig.
+     * Ein paar gestaffelte Nachlade-Versuche statt endlosem Pollen, damit garantiert
+     * irgendwann Schluss ist - auch wenn der Nutzer laengst weiternavigiert ist. */
+    private fun pollStalkerEpg(target: StalkerLevel.Items) {
+        lifecycleScope.launch {
+            for (delayMs in listOf(3000L, 8000L, 20000L)) {
+                delay(delayMs)
+                if (level != target) return@launch
+                val missingIds = currentItems.mapNotNull { if (it.overview.isNullOrBlank()) it.id else null }
+                if (missingIds.isEmpty()) return@launch
+                try {
+                    val epgMap = ApiClient.getStalkerEpg(missingIds)
+                    if (epgMap.isEmpty()) continue
+                    currentItems = currentItems.map { node ->
+                        val text = node.id?.let { epgMap[it] }
+                        if (text != null) node.copy(overview = text) else node
+                    }
+                    if (level == target) movieAdapter.update(currentItems.map { toMovie(it) })
+                } catch (e: Exception) {
+                    // best effort - naechster Versuch in der Schleife reicht
+                }
             }
         }
     }

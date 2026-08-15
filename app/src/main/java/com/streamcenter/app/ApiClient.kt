@@ -331,6 +331,18 @@ object ApiClient {
         return parseStalkerNodes(getText("$BASE/api/stalker/episodes?movie_id=$encMovie&season_id=$encSeason"))
     }
 
+    /** Fragt die im Hintergrund geladenen EPG-Texte fuer die angegebenen Kanal-IDs ab -
+     * liefert nur, was bereits fertig ist (Map kann kleiner als ids sein). Gedacht fuer
+     * einen einmaligen Nachlade-Aufruf kurz nach dem Anzeigen der Live-Kanalliste. */
+    suspend fun getStalkerEpg(ids: List<String>): Map<String, String> {
+        if (ids.isEmpty()) return emptyMap()
+        val enc = URLEncoder.encode(ids.joinToString(","), "UTF-8")
+        val o = JSONObject(getText("$BASE/api/stalker/epg?ids=$enc"))
+        val result = mutableMapOf<String, String>()
+        o.keys().forEach { key -> result[key] = o.getString(key) }
+        return result
+    }
+
     suspend fun loadM3u(url: String): List<LiveTvChannel> {
         val enc = URLEncoder.encode(url, "UTF-8")
         val text = getText("$BASE/api/m3u?url=$enc")
