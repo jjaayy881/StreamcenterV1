@@ -503,6 +503,21 @@ class AsyncStalkerPortal:
         cookies.update(self._session_cookies)  # Portal-eigene Cookies (PHPSESSID etc.)
         return cookies
 
+    def _epg_minimal_headers(self):
+        """Absichtlich ein SEHR schlankes Header-Set, exakt nachgebaut aus einem
+        bestaetigt funktionierenden curl-Test gegen ein Xtream-Codes-Portal mit
+        Stalker-Emulation - solche Portale scheinen bei Extra-Headern wie
+        'Authorization', 'Referer' oder 'Accept' auf dem get_epg_info/get_short_epg-
+        Endpunkt in eine kaputte/leere Antwort zu laufen, obwohl die "normalen"
+        Anfragen (Handshake, Kanalliste, Play) damit problemlos funktionieren."""
+        return {"User-Agent": "Mozilla/5.0 (QtEmbedded; U; Linux; C)", "X-User-MAC": self.mac}
+
+    def _epg_minimal_cookies(self):
+        cookies = {"mac": self.mac}
+        if self.token:
+            cookies["token"] = self.token
+        return cookies
+
     def _update_session_cookies(self, resp):
         """Merkt sich Cookies, die das Portal in der Antwort setzt (z.B. PHPSESSID) -
         muss nach JEDER Anfrage aufgerufen werden, damit spaetere Anfragen (auch in einer
@@ -623,11 +638,10 @@ class AsyncStalkerPortal:
         einfach stiller Fallback auf get_short_epg)."""
         await self.ensure_token(session)
         url = f"{self.portal_url}{self.api_path}"
-        params = {"type": "itv", "action": "get_epg_info", "period": str(period_hours),
-                   "JsHttpRequest": "1-xml"}
+        params = {"type": "itv", "action": "get_epg_info", "period": str(period_hours)}
         try:
-            async with session.get(url, params=params, headers=self._headers(include_auth=True),
-                                    cookies=self._cookies(), timeout=aiohttp.ClientTimeout(total=25)) as resp:
+            async with session.get(url, params=params, headers=self._epg_minimal_headers(),
+                                    cookies=self._epg_minimal_cookies(), timeout=aiohttp.ClientTimeout(total=25)) as resp:
                 self._update_session_cookies(resp)
                 raw_text = await resp.text()
                 data = await self._safe_json_from_text(raw_text)
@@ -653,11 +667,10 @@ class AsyncStalkerPortal:
         Kanalliste kaputt machen."""
         await self.ensure_token(session)
         url = f"{self.portal_url}{self.api_path}"
-        params = {"type": "itv", "action": "get_short_epg", "ch_id": str(ch_id),
-                   "size": str(size), "JsHttpRequest": "1-xml"}
+        params = {"type": "itv", "action": "get_short_epg", "ch_id": str(ch_id), "size": str(size)}
         try:
-            async with session.get(url, params=params, headers=self._headers(include_auth=True),
-                                    cookies=self._cookies(), timeout=aiohttp.ClientTimeout(total=8)) as resp:
+            async with session.get(url, params=params, headers=self._epg_minimal_headers(),
+                                    cookies=self._epg_minimal_cookies(), timeout=aiohttp.ClientTimeout(total=8)) as resp:
                 self._update_session_cookies(resp)
                 raw_text = await resp.text()
         except Exception as e:
