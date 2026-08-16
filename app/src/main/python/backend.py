@@ -643,10 +643,14 @@ class AsyncStalkerPortal:
 
     async def get_short_epg(self, session, ch_id, size=1):
         """Kurz-EPG (aktuell laufende Sendung) fuer einen Live-Kanal - Ministra-Standard-
-        Endpunkt. Liefert (titel, beschreibung), beides ggf. None. Wirft absichtlich nie -
-        EPG ist ein "nice to have", ein einzelner fehlgeschlagener Kanal soll nicht die
-        ganze Kanalliste kaputt machen. Portale liefern die Antwort in leicht
-        unterschiedlichen Formen, daher wird hier defensiv geparst."""
+        Endpunkt. Liefert (titel, beschreibung, blocked). titel/beschreibung sind ggf. None.
+        blocked=True heisst: das Portal liefert einen komplett leeren Antwort-Body (nicht
+        einmal gueltiges "leeres" JSON wie {"js":[]}) - das ist KEIN normales "kein EPG
+        fuer diesen Kanal", sondern ein Zeichen, dass das Skript auf Serverseite bei
+        wiederholten Aufrufen abstuerzt/blockt (typisch bei Xtream-Codes-Portalen, die
+        Stalker nur unvollstaendig emulieren). Wirft absichtlich nie - EPG ist ein
+        "nice to have", ein einzelner fehlgeschlagener Kanal soll nicht die ganze
+        Kanalliste kaputt machen."""
         await self.ensure_token(session)
         url = f"{self.portal_url}{self.api_path}"
         params = {"type": "itv", "action": "get_short_epg", "ch_id": str(ch_id),
@@ -656,11 +660,16 @@ class AsyncStalkerPortal:
                                     cookies=self._cookies(), timeout=aiohttp.ClientTimeout(total=8)) as resp:
                 self._update_session_cookies(resp)
                 raw_text = await resp.text()
-                data = await self._safe_json_from_text(raw_text)
         except Exception as e:
             log("INFO", f"get_short_epg({ch_id}) Anfrage fehlgeschlagen: {e}")
-            return None, None
+            return None, None, False
 
+        if not raw_text.strip():
+            # Komplett leerer Body - kein Parsing-Versuch noetig, das ist eindeutig
+            # "Portal antwortet nicht mehr sinnvoll", nicht "kein EPG fuer diesen Kanal".
+            return None, None, True
+
+        data = await self._safe_json_from_text(raw_text)
         js = data.get("js")
         entries = []
         if isinstance(js, list):
@@ -674,15 +683,14 @@ class AsyncStalkerPortal:
                 entries = first_val if isinstance(first_val, list) else []
 
         if not entries or not isinstance(entries[0], dict):
-            # Bei leerer/unerwarteter Antwort die ersten 200 Zeichen des ROHTEXTS mitloggen -
-            # falls das Portal bei zu vielen parallelen Anfragen eine HTML-Fehler-/Blockseite
-            # statt echtem JSON zurueckgibt, sieht man das hier sofort (statt nur "{}").
+            # {"js":[]} (oder aehnlich) ist KEIN Fehler, sondern ehrliches "kein EPG
+            # fuer diesen Kanal gerade" - dafuer nicht "blocked" melden.
             log("INFO", f"get_short_epg({ch_id}) leere/unerwartete Antwort, Rohtext: {raw_text[:200]!r}")
-            return None, None
+            return None, None, False
         entry = entries[0]
         name = entry.get("name") or entry.get("title")
         descr = entry.get("descr") or entry.get("description")
-        return name, descr
+        return name, descr, False
 
     async def get_categories(self, session, cat_type):
         await self.ensure_token(session)
@@ -1080,12 +1088,27 @@ async def _enrich_itv_nodes_with_epg(chid_list):
             log("INFO", "Bulk-EPG leer/nicht unterstuetzt - falle zurueck auf get_short_epg pro Kanal")
 
         missing = [c for c in chid_list if str(c) not in STALKER_EPG_CACHE]
+        if not missing:
+            return
+        log("INFO", f"Frage EPG einzeln ab fuer {len(missing)} Kanaele...")
+
         for ch_id in missing:
             try:
-                name, descr = await stalker_portal.get_short_epg(session, ch_id)
+                name, descr, blocked = await stalker_portal.get_short_epg(session, ch_id)
             except Exception as e:
                 log("INFO", f"EPG-Anreicherung fuer Kanal {ch_id} fehlgeschlagen: {e}")
-                name, descr = None, None
+                name, descr, blocked = None, None, False
+
+            if blocked:
+                # Portal antwortet nur noch mit komplett leerem Body (kein gueltiges JSON
+                # mehr) - typisch fuer Portale, deren Stalker-Emulation bei wiederholten
+                # EPG-Aufrufen abstuerzt (z.B. manche Xtream-Codes-Panels). Weitermachen
+                # wuerde nur sinnlos Zeit verschwenden und Log vollmuellen.
+                log("INFO", "EPG: Portal liefert nur noch leere Antworten (EPG-Endpunkt "
+                             "vermutlich instabil/nicht unterstuetzt) - breche fuer diese "
+                             "Kategorie ab.")
+                break
+
             if name:
                 STALKER_EPG_CACHE[str(ch_id)] = f"{name} \u2013 {descr}" if descr else name
             await asyncio.sleep(0.3)
