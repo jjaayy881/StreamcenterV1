@@ -410,22 +410,42 @@ class StalkerFragment : Fragment(R.layout.fragment_stalker) {
         }
     }
 
+    private var previewHwFallbackTried = false
+
     private fun ensurePreviewPlayer(): MediaPlayer {
         previewPlayer?.let { return it }
         val vlc = LibVLC(requireContext(), arrayListOf("--no-audio-time-stretch"))
         val player = MediaPlayer(vlc)
         player.attachViews(previewVideoLayout, null, false, false)
+        // Gleicher Grund wie beim Hauptplayer (PlayerActivity): auf manchen Geraeten
+        // liefert die Hardware-Dekodierung zwar Frames an libvlc, aber die Anzeige
+        // schlaegt still fehl (schwarzes Bild, kein Fehler-Event ohne diesen Listener).
+        // Deshalb bei EncounteredError einmal automatisch mit Software-Dekodierung
+        // erneut versuchen, bevor die Vorschau einfach schwarz bleibt.
+        player.setEventListener { event ->
+            if (event.type == MediaPlayer.Event.EncounteredError) {
+                val url = previewCurrentUrl
+                if (!previewHwFallbackTried && url != null) {
+                    previewHwFallbackTried = true
+                    startPreviewPlayback(url, useHwDecoder = false)
+                }
+            }
+        }
         previewLibVLC = vlc
         previewPlayer = player
         return player
     }
 
-    private fun startPreviewPlayback(url: String) {
+    private var previewCurrentUrl: String? = null
+
+    private fun startPreviewPlayback(url: String, useHwDecoder: Boolean = true) {
         if (previewVideoLayout.visibility != View.VISIBLE) return
+        previewCurrentUrl = url
+        if (useHwDecoder) previewHwFallbackTried = false
         try {
             val player = ensurePreviewPlayer()
             val media = Media(previewLibVLC, android.net.Uri.parse(url))
-            media.setHWDecoderEnabled(true, false)
+            media.setHWDecoderEnabled(useHwDecoder, false)
             player.media = media
             media.release()
             player.play()
