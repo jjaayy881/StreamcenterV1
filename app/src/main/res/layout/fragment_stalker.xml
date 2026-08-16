@@ -91,6 +91,17 @@
         android:textStyle="bold"
         android:layout_marginBottom="12dp" />
 
+    <!-- Live-TV-Vorschau: zeigt den gerade per D-Pad fokussierten Kanal, bevor man ihn
+         mit OK wirklich (vollbildig) startet - nur sichtbar beim Durchbrowsen der
+         Live-TV-Kanalliste. -->
+    <org.videolan.libvlc.util.VLCVideoLayout
+        android:id="@+id/preview_video_layout"
+        android:layout_width="match_parent"
+        android:layout_height="200dp"
+        android:layout_marginBottom="12dp"
+        android:background="@color/color_surface"
+        android:visibility="gone" />
+
     <androidx.recyclerview.widget.RecyclerView
         android:id="@+id/recycler"
         android:layout_width="match_parent"

@@ -15,7 +15,7 @@ private const val FOCUS_SCALE = 1.06f
 private const val FOCUS_ELEVATION_DP = 10f
 private const val FOCUS_ANIM_DURATION_MS = 150L
 
-fun View.applyTvFocusAnimation() {
+fun View.applyTvFocusAnimation(onFocusChanged: ((Boolean) -> Unit)? = null) {
     val density = resources.displayMetrics.density
 
     fun animateTo(active: Boolean) {
@@ -31,7 +31,10 @@ fun View.applyTvFocusAnimation() {
     }
 
     // D-Pad/Fernbedienung (Fire TV)
-    onFocusChangeListener = View.OnFocusChangeListener { _, hasFocus -> animateTo(hasFocus) }
+    onFocusChangeListener = View.OnFocusChangeListener { _, hasFocus ->
+        animateTo(hasFocus)
+        onFocusChanged?.invoke(hasFocus)
+    }
 
     // Touchscreen (Handy/Tablet): eine normale klickbare View wird durch einen Tap
     // NICHT "fokussiert" im Android-Sinne (state_focused greift praktisch nur bei

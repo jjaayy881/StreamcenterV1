@@ -17,6 +17,7 @@ class MovieAdapter(
     private var movies: List<Movie>,
     private val onLongClick: ((Int) -> Boolean)? = null,
     private val isFavorite: ((Context, Movie) -> Boolean) = FavoritesManager::isTelegramFavorite,
+    private val onFocus: ((Int) -> Unit)? = null,
     private val onClick: (Int) -> Unit
 ) : RecyclerView.Adapter<MovieAdapter.MovieHolder>() {
 
@@ -94,7 +95,7 @@ class MovieAdapter(
 
         holder.itemView.setOnClickListener { onClick(position) }
         holder.itemView.setOnLongClickListener { onLongClick?.invoke(position) ?: false }
-        holder.itemView.applyTvFocusAnimation()
+        holder.itemView.applyTvFocusAnimation { hasFocus -> if (hasFocus) onFocus?.invoke(position) }
         if (position == 0 && pendingInitialFocus) {
             pendingInitialFocus = false
             holder.itemView.post { holder.itemView.requestFocus() }

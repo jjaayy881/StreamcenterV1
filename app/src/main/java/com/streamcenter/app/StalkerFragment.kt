@@ -13,9 +13,14 @@ import androidx.fragment.app.Fragment
 import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import org.json.JSONObject
+import org.videolan.libvlc.LibVLC
+import org.videolan.libvlc.Media
+import org.videolan.libvlc.MediaPlayer
+import org.videolan.libvlc.util.VLCVideoLayout
 import java.io.File
 
 private const val TYPE_ITV = "itv"
@@ -57,6 +62,15 @@ class StalkerFragment : Fragment(R.layout.fragment_stalker) {
     private lateinit var connectStatus: TextView
     private lateinit var rowAdapter: RowAdapter
     private lateinit var movieAdapter: MovieAdapter
+    private lateinit var shelfAdapter: ShelfAdapter
+    private lateinit var previewVideoLayout: VLCVideoLayout
+
+    // Live-TV-Vorschau: eigener, leichtgewichtiger LibVLC-Player getrennt von
+    // PlayerActivity - spielt beim Durchbrowsen der Kanalliste den fokussierten Kanal in
+    // der kleinen Vorschau-Flaeche, bevor man mit OK wirklich (vollbildig) startet.
+    private var previewLibVLC: LibVLC? = null
+    private var previewPlayer: MediaPlayer? = null
+    private var previewDebounceJob: Job? = null
 
     private val backStack = ArrayDeque<StalkerLevel>()
     private var level: StalkerLevel = StalkerLevel.TypeSelect
@@ -73,6 +87,12 @@ class StalkerFragment : Fragment(R.layout.fragment_stalker) {
     private var currentSeasons: List<StalkerNode> = emptyList()
     private var currentEpisodes: List<StalkerNode> = emptyList()
     private var currentFavorites: List<Movie> = emptyList()
+
+    // Netflix-artiges Regal (Filme/Serien): Kategorien als Zeilen, Eintraege pro Zeile
+    // werden erst beim tatsaechlichen Sichtbarwerden nachgeladen (siehe ShelfAdapter).
+    private var shelfRows: MutableList<ShelfRowData> = mutableListOf()
+    private var shelfLoadingRows = mutableSetOf<Int>()
+    private var shelfCurrentType: String = TYPE_VOD
 
     // Host des aktuell verbundenen Portals - Favoriten sind pro Portal getrennt
     // gespeichert (movie_id/cmd sind pro Portal vergeben, ein Portalwechsel soll
@@ -117,8 +137,15 @@ class StalkerFragment : Fragment(R.layout.fragment_stalker) {
         movieAdapter = MovieAdapter(
             emptyList(),
             onLongClick = { pos -> onMovieLongClick(pos) },
-            isFavorite = { ctx, movie -> FavoritesManager.isStalkerFavorite(ctx, currentPortalScope, movie) }
+            isFavorite = { ctx, movie -> FavoritesManager.isStalkerFavorite(ctx, currentPortalScope, movie) },
+            onFocus = { pos -> onItemsFocusChanged(pos) }
         ) { pos -> onLeafClick(pos) }
+        shelfAdapter = ShelfAdapter(
+            shelfRows,
+            onNeedLoad = { idx -> loadShelfRow(idx) },
+            onItemClick = { row, item -> onShelfItemClick(row, item) }
+        )
+        previewVideoLayout = view.findViewById(R.id.preview_video_layout)
 
         btnConnect.setOnClickListener { onConnectClicked() }
 
@@ -206,6 +233,11 @@ class StalkerFragment : Fragment(R.layout.fragment_stalker) {
         level = target
         pendingSlot = null
         showConnectForm(false)
+
+        val showsPreview = target is StalkerLevel.Items && target.type == TYPE_ITV
+        previewVideoLayout.visibility = if (showsPreview) View.VISIBLE else View.GONE
+        if (!showsPreview) stopPreviewPlayback()
+
         when (target) {
             StalkerLevel.TypeSelect -> loadTypeSelect()
             StalkerLevel.ProfileSelect -> loadProfileSelect()
@@ -291,6 +323,7 @@ class StalkerFragment : Fragment(R.layout.fragment_stalker) {
             is StalkerLevel.Items -> {
                 val item = currentItems.getOrNull(pos) ?: return
                 if (item.streamUrl != null) {
+                    stopPreviewPlayback()
                     playSingle(item.streamUrl, item.title)
                 } else if (item.movieId != null) {
                     navigateTo(StalkerLevel.Seasons(item.movieId, item.title))
@@ -362,6 +395,75 @@ class StalkerFragment : Fragment(R.layout.fragment_stalker) {
         }
     }
 
+    /** Wird bei jedem D-Pad-Fokuswechsel in der Live-TV-Kanalliste aufgerufen (siehe
+     * onFocus-Callback am movieAdapter). Debounced, damit schnelles Durchscrollen nicht
+     * fuer JEDEN kurz gestreiften Kanal einen eigenen Verbindungsaufbau anstoesst - erst
+     * wenn der Fokus kurz "steht", startet die Vorschau wirklich. */
+    private fun onItemsFocusChanged(pos: Int) {
+        if (level !is StalkerLevel.Items || (level as StalkerLevel.Items).type != TYPE_ITV) return
+        val item = currentItems.getOrNull(pos) ?: return
+        val url = item.streamUrl ?: return
+        previewDebounceJob?.cancel()
+        previewDebounceJob = lifecycleScope.launch {
+            delay(400)
+            startPreviewPlayback(url)
+        }
+    }
+
+    private fun ensurePreviewPlayer(): MediaPlayer {
+        previewPlayer?.let { return it }
+        val vlc = LibVLC(requireContext(), arrayListOf("--no-audio-time-stretch"))
+        val player = MediaPlayer(vlc)
+        player.attachViews(previewVideoLayout, null, false, false)
+        previewLibVLC = vlc
+        previewPlayer = player
+        return player
+    }
+
+    private fun startPreviewPlayback(url: String) {
+        if (previewVideoLayout.visibility != View.VISIBLE) return
+        try {
+            val player = ensurePreviewPlayer()
+            val media = Media(previewLibVLC, android.net.Uri.parse(url))
+            media.setHWDecoderEnabled(true, false)
+            player.media = media
+            media.release()
+            player.play()
+        } catch (e: Exception) {
+            // Vorschau ist ein "nice to have" - ein fehlgeschlagener Kanal soll nicht
+            // die Navigation/Liste beeintraechtigen, OK startet ihn ja trotzdem vollbildig.
+        }
+    }
+
+    private fun stopPreviewPlayback() {
+        previewDebounceJob?.cancel()
+        previewDebounceJob = null
+        previewPlayer?.stop()
+    }
+
+    private fun releasePreviewPlayer() {
+        previewDebounceJob?.cancel()
+        previewDebounceJob = null
+        previewPlayer?.let {
+            it.stop()
+            it.detachViews()
+            it.release()
+        }
+        previewPlayer = null
+        previewLibVLC?.release()
+        previewLibVLC = null
+    }
+
+    override fun onPause() {
+        stopPreviewPlayback()
+        super.onPause()
+    }
+
+    override fun onDestroyView() {
+        releasePreviewPlayer()
+        super.onDestroyView()
+    }
+
     private fun loadFavorites() {
         recycler.adapter = movieAdapter
         val favs = FavoritesManager.getStalkerFavorites(requireContext(), currentPortalScope)
@@ -404,6 +506,10 @@ class StalkerFragment : Fragment(R.layout.fragment_stalker) {
     }
 
     private fun loadCategories(target: StalkerLevel.Categories) {
+        if (target.type == TYPE_VOD || target.type == TYPE_SERIES) {
+            loadShelf(target)
+            return
+        }
         header.showNormal(target.label)
         recycler.adapter = rowAdapter
         rowAdapter.update(listOf("Lade..."))
@@ -420,6 +526,67 @@ class StalkerFragment : Fragment(R.layout.fragment_stalker) {
             } catch (e: Exception) {
                 rowAdapter.update(listOf("Fehler: ${e.message}"))
             }
+        }
+    }
+
+    /** Netflix-artiges Regal fuer Filme/Serien: Kategorien werden komplett geladen (das
+     * ist ein einziger, guenstiger Aufruf), die EINTRAEGE pro Kategorie aber erst, wenn
+     * die jeweilige Zeile im ShelfAdapter tatsaechlich gebunden wird - sonst wuerden bei
+     * z.B. 30 Kategorien sofort 30 parallele Listen-Aufrufe ans Portal rausgehen. */
+    private fun loadShelf(target: StalkerLevel.Categories) {
+        header.showNormal(target.label)
+        shelfCurrentType = target.type
+        recycler.adapter = shelfAdapter
+        shelfRows = mutableListOf()
+        shelfLoadingRows.clear()
+        shelfAdapter.update(shelfRows)
+        lifecycleScope.launch {
+            try {
+                checkConnected()
+                val cats = ApiClient.getStalkerCategories(target.type)
+                currentCategories = cats
+                if (cats.isEmpty()) {
+                    header.showError("Keine Kategorien gefunden")
+                    return@launch
+                }
+                shelfRows = cats.map { ShelfRowData(it) }.toMutableList()
+                shelfAdapter.update(shelfRows)
+            } catch (e: Exception) {
+                header.showError("Fehler: ${e.message}")
+            }
+        }
+    }
+
+    private fun loadShelfRow(index: Int) {
+        if (index in shelfLoadingRows || index !in shelfRows.indices) return
+        val row = shelfRows[index]
+        if (row.items != null) return
+        val categoryId = row.category.categoryId
+        if (categoryId == null) {
+            shelfAdapter.setRowItems(index, emptyList())
+            return
+        }
+        shelfLoadingRows.add(index)
+        lifecycleScope.launch {
+            try {
+                // Nur eine Vorschau-Menge pro Zeile - fuer ein Regal reichen ein paar
+                // Dutzend Kacheln, das haelt es beim Durchbrowsen aller Kategorien schnell.
+                val items = ApiClient.getStalkerItems(shelfCurrentType, categoryId).take(30)
+                shelfAdapter.setRowItems(index, items)
+            } catch (e: Exception) {
+                shelfAdapter.setRowItems(index, emptyList())
+            } finally {
+                shelfLoadingRows.remove(index)
+            }
+        }
+    }
+
+    private fun onShelfItemClick(rowIndex: Int, itemIndex: Int) {
+        val item = shelfRows.getOrNull(rowIndex)?.items?.getOrNull(itemIndex) ?: return
+        if (item.streamUrl != null) {
+            playSingle(item.streamUrl, item.title)
+        } else if (item.movieId != null) {
+            navigateTo(StalkerLevel.Seasons(item.movieId, item.title))
         }
     }
 
